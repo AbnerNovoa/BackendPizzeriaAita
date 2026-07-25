@@ -1,0 +1,27 @@
+# cloudbuild.yaml
+steps:
+# 1. Construir la imagen Docker usando el Dockerfile creado antes
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['build', '-t', 'gcr.io/$PROJECT_ID/backend-pizza', '.']
+
+# 2. Subir la imagen al Artifact Registry de Google
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['push', 'gcr.io/$PROJECT_ID/backend-pizza']
+
+# 3. Desplegar a Cloud Run
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  entrypoint: gcloud
+  args:
+  - 'run'
+  - 'deploy'
+  - 'backend-pizza-git' # <-- Nombre de tu servicio en Cloud Run
+  - '--image=gcr.io/$PROJECT_ID/backend-pizza'
+  - '--region=us-central1' # <-- Asegúrate que sea la región de tu BD
+  - '--allow-unauthenticated'
+  - '--set-env-vars=DB_HOST=${_DB_HOST},DB_USER=${_DB_USER},DB_PASS=${_DB_PASS},DB_NAME=${_DB_NAME},DB_PORT=${_DB_PORT},PORT=${_PORT},JWT_SECRET=${_JWT_SECRET},EMAIL_USER=${_EMAIL_USER},EMAIL_PASS=${_EMAIL_PASS},FRONTEND_URL=${_FRONTEND_URL},TOKEN=${_TOKEN}'
+  - '--platform=managed'
+  - '--project=$PROJECT_ID'
+
+# CRITICAL FIX: Esta línea corrige el error persistente de los logs
+options:
+  logging: CLOUD_LOGGING_ONLY
