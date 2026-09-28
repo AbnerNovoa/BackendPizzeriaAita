@@ -231,7 +231,14 @@ exports.createPedidoConDetalle = async (req, res) => {
       // INSERTAR DETALLES + RESTAR STOCK
       // ============================================================
       for (const d of detalles) {
-        const { ID_Producto_T, ID_Combo, Cantidad, Precio, Complementos } = d;
+        const {
+          ID_Producto_T,
+          ID_Combo,
+          Cantidad,
+          Precio,
+          Complementos,
+          Notas,
+        } = d;
 
         if (!Cantidad || Cantidad <= 0)
           throw new Error("Cantidad inválida en un detalle");
@@ -246,14 +253,16 @@ exports.createPedidoConDetalle = async (req, res) => {
           .input("ID_Producto_T", sql.Int, ID_Producto_T || null)
           .input("ID_Combo", sql.Int, ID_Combo || null)
           .input("Cantidad", sql.Int, Cantidad)
-          .input("PrecioTotal", sql.Decimal(10, 2), subtotalLinea).query(`
+          .input("PrecioTotal", sql.Decimal(10, 2), subtotalLinea)
+          .input("Notas", sql.NVarChar(150), Notas || null) // 🔹 AGREGAR ESTA LÍNEA
+          .query(`
             INSERT INTO Pedido_Detalle (
               ID_Pedido, ID_Producto_T, ID_Combo,
-              Cantidad, PrecioTotal
+              Cantidad, PrecioTotal, Notas
             )
             VALUES (
               @ID_Pedido, @ID_Producto_T, @ID_Combo,
-              @Cantidad, @PrecioTotal
+              @Cantidad, @PrecioTotal, @Notas
             )
           `);
 
@@ -602,6 +611,7 @@ exports.getPedidoDetalles = async (req, res) => {
           d.ID_Combo, 
           d.Cantidad, 
           d.PrecioTotal,
+          d.Notas,
           p.Nombre AS nombre_producto,
           t.Tamano AS nombre_tamano,
           cp.Nombre AS nombre_categoria,
@@ -666,6 +676,7 @@ exports.getPedidoById = async (req, res) => {
           d.ID_Combo, 
           d.Cantidad, 
           d.PrecioTotal,
+          d.Notas,
           p.Nombre AS nombre_producto,
           t.Tamano AS nombre_tamano,
           c.Nombre AS nombre_combo
@@ -809,6 +820,7 @@ exports.getPedidosHoy = async (_req, res) => {
         const detallesQuery = `
   SELECT 
     pd.Cantidad,
+    pd.Notas,
     -- Información de producto
     pr.Nombre AS nombre_producto,
     t.Tamano AS nombre_tamano,
@@ -830,12 +842,13 @@ exports.getPedidosHoy = async (_req, res) => {
 
         const detallesTexto = detallesResult.recordset
           .map((d) => {
+            const nota = d.Notas ? ` [${d.Notas}]` : ""; // 🔹 AGREGAR: mostrar la nota entre corchetes
             if (d.nombre_producto) {
-              return `${d.nombre_producto} (${d.nombre_tamano}) x ${d.Cantidad}`;
+              return `${d.nombre_producto} (${d.nombre_tamano}) x ${d.Cantidad}${nota}`;
             } else if (d.nombre_combo) {
-              return `${d.nombre_combo} (Combo) x ${d.Cantidad}`;
+              return `${d.nombre_combo} (Combo) x ${d.Cantidad}${nota}`;
             }
-            return `Item x ${d.Cantidad}`;
+            return `Item x ${d.Cantidad}${nota}`;
           })
           .join(", ");
 

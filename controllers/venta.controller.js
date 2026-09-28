@@ -237,7 +237,23 @@ exports.createVenta = async (req, res) => {
     const esExitoso = await iniciarTemporizadorRespuesta(pedidoDataSimulada);
 
     // C. Si la simulación da falso (30%), frena el flujo y no altera la BD
+    // C. Si la simulación da falso (30%), frena el flujo y cancela el pedido huérfano
     if (!esExitoso) {
+      try {
+        await pool
+          .request()
+          .input("ID_Pedido", sql.Int, ID_Pedido)
+          .input("Estado_P", sql.Char(1), "C")
+          .query(
+            "UPDATE Pedido SET Estado_P = @Estado_P WHERE ID_Pedido = @ID_Pedido",
+          );
+        console.log(
+          `Pedido #${ID_Pedido} cancelado automáticamente por fallo en validación de WhatsApp (simulación)`,
+        );
+      } catch (cancelErr) {
+        console.error("No se pudo cancelar el pedido huérfano:", cancelErr);
+      }
+
       return res.status(400).json({
         error: "Error: La transferencia no pudo ser validada. Venta cancelada.",
       });
@@ -312,6 +328,23 @@ exports.createVenta = async (req, res) => {
   } catch (err) {
     if (transaction.isOpen) await transaction.rollback();
     console.error("createVenta error:", err);
+
+    // 🔹 NUEVO: Cancelar automáticamente el pedido huérfano
+    try {
+      await pool
+        .request()
+        .input("ID_Pedido", sql.Int, ID_Pedido)
+        .input("Estado_P", sql.Char(1), "C")
+        .query(
+          "UPDATE Pedido SET Estado_P = @Estado_P WHERE ID_Pedido = @ID_Pedido",
+        );
+      console.log(
+        `Pedido #${ID_Pedido} cancelado automáticamente por fallo al registrar la venta`,
+      );
+    } catch (cancelErr) {
+      console.error("No se pudo cancelar el pedido huérfano:", cancelErr);
+    }
+
     res.status(500).json({ error: "Error al registrar venta" });
   }
 };
@@ -370,7 +403,7 @@ exports.datosBoletaVenta = async (req, res) => {
     const detallesRes = await pool
       .request()
       .input("ID_Pedido", sql.Int, venta.ID_Pedido).query(`
-            SELECT pd.Cantidad, pd.PrecioTotal,
+            SELECT pd.Cantidad, pd.PrecioTotal, pd.Notas,
                    ISNULL(pr.Nombre, cm.Nombre) as Item_Nombre,
                    t.Tamano as Tamano_Nombre,
                    CASE WHEN pd.ID_Combo IS NOT NULL THEN 'Combo' ELSE 'Producto' END as Tipo
@@ -516,21 +549,27 @@ exports.getVentasHoy = async (_req, res) => {
 // ==============================
 exports.getVentasPorPeriodo = async (req, res) => {
   try {
-    const { periodo } = req.query; // dia, semana, mes
+    const { periodo, fecha } = req.query; // dia, semana, mes + fecha de referencia opcional
     const pool = await getConnection();
+    const request = pool.request();
     let filter = "";
 
+    // Si mandan una fecha de referencia, la usamos como parámetro.
+    // Si no, usamos la fecha/hora actual del servidor (GETDATE()).
+    const fechaRefExpr = fecha ? "@fechaRef" : "GETDATE()";
+    if (fecha) {
+      request.input("fechaRef", sql.Date, fecha);
+    }
+
     if (periodo === "dia")
-      filter = "CAST(v.Fecha_Registro AS DATE) = CAST(GETDATE() AS DATE)";
+      filter = `CAST(v.Fecha_Registro AS DATE) = CAST(${fechaRefExpr} AS DATE)`;
     else if (periodo === "semana")
-      filter =
-        "DATEPART(week, v.Fecha_Registro) = DATEPART(week, GETDATE()) AND YEAR(v.Fecha_Registro) = YEAR(GETDATE())";
+      filter = `DATEPART(ISO_WEEK, v.Fecha_Registro) = DATEPART(ISO_WEEK, ${fechaRefExpr}) AND YEAR(v.Fecha_Registro) = YEAR(${fechaRefExpr})`;
     else if (periodo === "mes")
-      filter =
-        "MONTH(v.Fecha_Registro) = MONTH(GETDATE()) AND YEAR(v.Fecha_Registro) = YEAR(GETDATE())";
+      filter = `MONTH(v.Fecha_Registro) = MONTH(${fechaRefExpr}) AND YEAR(v.Fecha_Registro) = YEAR(${fechaRefExpr})`;
     else return res.status(400).json({ error: "Periodo inválido" });
 
-    const result = await pool.request().query(`
+    const result = await request.query(`
             SELECT v.*, c.Nombre as Cliente FROM Ventas v
             JOIN Pedido p ON v.ID_Pedido = p.ID_Pedido
             JOIN Cliente c ON p.ID_Cliente = c.ID_Cliente
